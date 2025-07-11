@@ -586,6 +586,7 @@ class Model:
             retry=retry_if_exception(self.should_retry),
             stop=stop,
             before_sleep=functools.partial(log_model_retry, self.api.model_name),
+            reraise=True
         )
         async def generate() -> tuple[ModelOutput, BaseModel]:
             # type-checker can't see that we made sure tool_choice is not none in the outer frame
