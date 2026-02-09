@@ -179,6 +179,10 @@ class OpenRouterAPI(OpenAICompatibleAPI):
         def handle_reasoning_details(
             content: ContentReasoning,
         ) -> dict[str, JsonValue] | str:
+            # xAI does not support reasoning_details replay via Chat Completions
+            if self.service_model_name().startswith("x-ai/") and content.redacted:
+                return {}
+
             details = reasoning_to_openrouter_reasoning_details(content)
             if details is not None:
                 return details

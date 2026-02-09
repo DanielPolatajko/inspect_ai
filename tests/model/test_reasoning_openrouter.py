@@ -1,9 +1,13 @@
 import json
 from unittest.mock import patch
 
-from inspect_ai._util.content import ContentReasoning
+import pytest
+
+from inspect_ai._util.content import ContentReasoning, ContentText
+from inspect_ai.model._chat_message import ChatMessageAssistant
 from inspect_ai.model._providers.openrouter import (
     OPENROUTER_REASONING_DETAILS_SIGNATURE,
+    OpenRouterAPI,
     openrouter_reasoning_details_to_reasoning,
     reasoning_to_openrouter_reasoning_details,
 )
@@ -266,3 +270,66 @@ class TestRoundTrip:
 
         assert result is not None
         assert result["reasoning_details"] == original
+
+
+# =============================================================================
+# Tests for xAI reasoning replay handling
+# =============================================================================
+
+
+def _make_openrouter_api(model_name: str) -> OpenRouterAPI:
+    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+        return OpenRouterAPI(model_name=model_name)
+
+
+def _encrypted_reasoning() -> ContentReasoning:
+    details = [
+        {
+            "type": "reasoning.encrypted",
+            "data": "encrypted-base64-data",
+            "id": "e1",
+            "format": "openrouter-v1",
+        }
+    ]
+    signature = f"{OPENROUTER_REASONING_DETAILS_SIGNATURE}{json.dumps(details)}"
+    return ContentReasoning(
+        reasoning="encrypted-base64-data",
+        redacted=True,
+        signature=signature,
+    )
+
+
+class TestXaiReasoningReplay:
+    """Tests that xAI models skip reasoning_details replay."""
+
+    @pytest.mark.asyncio
+    async def test_xai_encrypted_reasoning_dropped(self):
+        """Encrypted reasoning from xAI should not appear in messages."""
+        api = _make_openrouter_api("x-ai/grok-4")
+        messages = [
+            ChatMessageAssistant(
+                content=[_encrypted_reasoning(), ContentText(text="Hello!")],
+                source="generate",
+            )
+        ]
+
+        result = await api.messages_to_openai(messages)
+
+        for msg in result:
+            assert "reasoning_details" not in msg
+
+    @pytest.mark.asyncio
+    async def test_non_xai_encrypted_reasoning_replayed(self):
+        """Encrypted reasoning from non-xAI models should be replayed."""
+        api = _make_openrouter_api("openai/o4-mini")
+        messages = [
+            ChatMessageAssistant(
+                content=[_encrypted_reasoning(), ContentText(text="Hello!")],
+                source="generate",
+            )
+        ]
+
+        result = await api.messages_to_openai(messages)
+
+        has_reasoning_details = any("reasoning_details" in msg for msg in result)
+        assert has_reasoning_details
